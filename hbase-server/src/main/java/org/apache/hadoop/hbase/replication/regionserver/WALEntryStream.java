@@ -18,12 +18,8 @@
  */
 package org.apache.hadoop.hbase.replication.regionserver;
 
-import java.io.Closeable;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.util.OptionalLong;
-import java.util.concurrent.PriorityBlockingQueue;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -31,6 +27,7 @@ import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.regionserver.wal.ProtobufLogReader;
 import org.apache.hadoop.hbase.util.CancelableProgressable;
+import org.apache.hadoop.hbase.util.CommonFSUtils;
 import org.apache.hadoop.hbase.util.FSUtils;
 import org.apache.hadoop.hbase.util.LeaseNotRecoveredException;
 import org.apache.hadoop.hbase.wal.WAL.Entry;
@@ -42,6 +39,13 @@ import org.apache.yetus.audience.InterfaceStability;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.Closeable;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.util.Objects;
+import java.util.OptionalLong;
+import java.util.concurrent.PriorityBlockingQueue;
+
 /**
  * Streaming access to WAL entries. This class is given a queue of WAL {@link Path}, and continually
  * iterates through all the WAL {@link Entry} in the queue. When it's done reading from a Path, it
@@ -51,6 +55,9 @@ import org.slf4j.LoggerFactory;
 @InterfaceStability.Evolving
 class WALEntryStream implements Closeable {
   private static final Logger LOG = LoggerFactory.getLogger(WALEntryStream.class);
+
+  public static final String RESTART_WAL_READING_CONFIG_ENTRY = "restart.wal.reading";
+  public static final String SKIP_WAL_LOG_FILE_PATH_CONFIG_ENTRY = "skip.wal.log.file.path";
 
   private Reader reader;
   private Path currentPath;
@@ -70,6 +77,7 @@ class WALEntryStream implements Closeable {
   private final ServerName serverName;
   private final MetricsSource metrics;
 
+  private final boolean restartWALReading;
   /**
    * Create an entry stream over the given queue at the given start position
    * @param logQueue the queue of WAL paths
@@ -81,8 +89,8 @@ class WALEntryStream implements Closeable {
    * @throws IOException
    */
   public WALEntryStream(PriorityBlockingQueue<Path> logQueue, FileSystem fs, Configuration conf,
-      long startPosition, WALFileLengthProvider walFileLengthProvider, ServerName serverName,
-      MetricsSource metrics) throws IOException {
+                        long startPosition, WALFileLengthProvider walFileLengthProvider, ServerName serverName,
+                        MetricsSource metrics) throws IOException {
     this.logQueue = logQueue;
     this.fs = fs;
     this.conf = conf;
@@ -90,6 +98,13 @@ class WALEntryStream implements Closeable {
     this.walFileLengthProvider = walFileLengthProvider;
     this.serverName = serverName;
     this.metrics = metrics;
+
+    this.restartWALReading = conf.getBoolean(RESTART_WAL_READING_CONFIG_ENTRY, true);
+    if (!restartWALReading) {
+      Objects.requireNonNull(conf.get(SKIP_WAL_LOG_FILE_PATH_CONFIG_ENTRY), SKIP_WAL_LOG_FILE_PATH_CONFIG_ENTRY + " is not present in config");
+    }
+
+    LOG.info("RESTART_WAL_READING_CONFIG_ENTRY: {}, SKIP_WAL_LOG_FILE_PATH_CONFIG_ENTRY: {}", conf.get(RESTART_WAL_READING_CONFIG_ENTRY), conf.get(SKIP_WAL_LOG_FILE_PATH_CONFIG_ENTRY));
   }
 
   /**
@@ -227,15 +242,29 @@ class WALEntryStream implements Closeable {
           metrics.incrBytesSkippedInUncleanlyClosedWALs(skippedBytes);
         }
       } else if (currentPositionOfReader + trailerSize < stat.getLen()) {
-        LOG.warn(
-          "Processing end of WAL file '{}'. At position {}, which is too far away from" +
-            " reported file length {}. Restarting WAL reading (see HBASE-15983 for details). {}",
-          currentPath, currentPositionOfReader, stat.getLen(), getCurrentPathStat());
-        setPosition(0);
-        resetReader();
-        metrics.incrRestartedWALReading();
-        metrics.incrRepeatedFileBytes(currentPositionOfReader);
-        return false;
+        if (restartWALReading) {
+          LOG.warn("Processing end of WAL file '{}'. At position {}, which is too far away from" +
+                          " reported file length {}. Restarting WAL reading (see HBASE-15983 for details). {}",
+                  currentPath, currentPositionOfReader, stat.getLen(), getCurrentPathStat());
+          setPosition(0);
+          resetReader();
+          metrics.incrRestartedWALReading();
+          metrics.incrRepeatedFileBytes(currentPositionOfReader);
+          return false;
+        } else {
+          LOG.warn("Processing end of WAL file '{}'. At position {}, which is too far away from" +
+                          " reported file length {}. CurrentPathStat {}",
+                  currentPath, currentPositionOfReader, stat.getLen(), getCurrentPathStat());
+          Path logPath = new Path(conf.get(SKIP_WAL_LOG_FILE_PATH_CONFIG_ENTRY));
+          try (FSDataOutputStream stream = fs.exists(logPath) ? fs.append(logPath) : fs.create(logPath) ){
+            //Current time
+            stream.writeLong(System.currentTimeMillis());
+            stream.writeChar(' ');
+            stream.writeUTF(CommonFSUtils.getPath(currentPath));
+            stream.writeChar(' ');
+            stream.writeChar('\n');
+          }
+        }
       }
     }
     if (LOG.isTraceEnabled()) {

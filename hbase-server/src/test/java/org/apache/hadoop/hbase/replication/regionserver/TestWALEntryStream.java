@@ -17,26 +17,6 @@
  */
 package org.apache.hadoop.hbase.replication.regionserver;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertSame;
-import static org.junit.Assert.assertTrue;
-import static org.mockito.Mockito.when;
-
-import java.io.IOException;
-import java.util.NavigableMap;
-import java.util.OptionalLong;
-import java.util.TreeMap;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.Future;
-import java.util.concurrent.PriorityBlockingQueue;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -71,7 +51,28 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.junit.rules.TestName;
-import org.mockito.Mockito;
+
+import java.io.IOException;
+import java.util.NavigableMap;
+import java.util.OptionalLong;
+import java.util.TreeMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.Future;
+import java.util.concurrent.PriorityBlockingQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 @Category({ ReplicationTests.class, LargeTests.class })
 public class TestWALEntryStream {
@@ -110,6 +111,8 @@ public class TestWALEntryStream {
     TEST_UTIL = new HBaseTestingUtility();
     CONF = TEST_UTIL.getConfiguration();
     TEST_UTIL.startMiniDFSCluster(3);
+    CONF.set(WALEntryStream.RESTART_WAL_READING_CONFIG_ENTRY, "false");
+    CONF.set(WALEntryStream.SKIP_WAL_LOG_FILE_PATH_CONFIG_ENTRY, "/hbase/skipped_logs");
 
     cluster = TEST_UTIL.getDFSCluster();
     fs = cluster.getFileSystem();
@@ -334,10 +337,10 @@ public class TestWALEntryStream {
   }
 
   private ReplicationSource mockReplicationSource(boolean recovered, Configuration conf) {
-    ReplicationSourceManager mockSourceManager = Mockito.mock(ReplicationSourceManager.class);
+    ReplicationSourceManager mockSourceManager = mock(ReplicationSourceManager.class);
     when(mockSourceManager.getTotalBufferUsed()).thenReturn(new AtomicLong(0));
-    Server mockServer = Mockito.mock(Server.class);
-    ReplicationSource source = Mockito.mock(ReplicationSource.class);
+    Server mockServer = mock(Server.class);
+    ReplicationSource source = mock(ReplicationSource.class);
     when(source.getSourceManager()).thenReturn(mockSourceManager);
     when(source.getSourceMetrics()).thenReturn(new MetricsSource("1"));
     when(source.getWALFileLengthProvider()).thenReturn(log);
@@ -427,6 +430,7 @@ public class TestWALEntryStream {
     Path walPath = walQueue.peek();
     log.rollWriter();
     appendEntriesToLogAndSync(20);
+
     TEST_UTIL.waitFor(5000, new ExplainingPredicate<Exception>() {
 
       @Override
