@@ -146,16 +146,18 @@ AssignmentManager assignmentManager = master.getAssignmentManager();
             </div>
             <div class="collapse navbar-collapse">
                 <ul class="nav navbar-nav">
-                <li class="active"><a href="/">Home</a></li>
+                <li class="active"><a href="/master-status">Home</a></li>
                 <li><a href="/tablesDetailed.jsp">Table Details</a></li>
                 <%if master.isActiveMaster() %>
-                <li><a href="/procedures.jsp">Procedures &amp; Locks</a></li>
+                    <li><a href="/procedures.jsp">Procedures &amp; Locks</a></li>
+                    <li><a href="/hbck.jsp">HBCK Report</a></li>
                 </%if>
                 <li><a href="/processMaster.jsp">Process Metrics</a></li>
                 <li><a href="/logs/">Local Logs</a></li>
                 <li><a href="/logLevel">Log Level</a></li>
                 <li><a href="/dump">Debug Dump</a></li>
                 <li><a href="/jmx">Metrics Dump</a></li>
+                <li><a href="/prof">Profiler</a></li>
                 <%if HBaseConfiguration.isShowConfInServlet()%>
                 <li><a href="/conf">HBase Configuration</a></li>
                 </%if>
@@ -190,8 +192,8 @@ AssignmentManager assignmentManager = master.getAssignmentManager();
         </%if>
         <%if master.isInMaintenanceMode() %>
           <div class="alert alert-warning">
-          Your Master is in maintenance mode. This may be because of HBCK aborting while
-          running in repair mode. Please re-run HBCK in repair mode.
+          Your Master is in maintenance mode. This is because hbase.master.maintenance_mode is
+          set to true. Under the maintenance mode, no quota or no Master coprocessor is loaded.
           </div>
         </%if>
         <%if !master.isBalancerOn() %>
@@ -218,11 +220,13 @@ AssignmentManager assignmentManager = master.getAssignmentManager();
         <%if master.getAssignmentManager() != null %>
           <& AssignmentManagerStatusTmpl; assignmentManager=master.getAssignmentManager()&>
         </%if>
-        <%if master.getMasterCoprocessorHost().findCoprocessor("RSGroupAdminEndpoint") != null %>
-          <section>
-            <h2><a name="rsgroup">RSGroup</a></h2>
-            <& RSGroupListTmpl; master= master; serverManager= serverManager&>
-          </section>
+        <%if !master.isInMaintenanceMode() %>
+          <%if master.getMasterCoprocessorHost().findCoprocessor("RSGroupAdminEndpoint") != null %>
+            <section>
+              <h2><a name="rsgroup">RSGroup</a></h2>
+              <& RSGroupListTmpl; master= master; serverManager= serverManager&>
+            </section>
+          </%if>
         </%if>
         <section>
             <h2><a name="regionservers">Region Servers</a></h2>
@@ -278,7 +282,7 @@ AssignmentManager assignmentManager = master.getAssignmentManager();
 
 
         <section>
-            <& ../common/TaskMonitorTmpl; filter = filter &>
+            <& ../common/TaskMonitorTmpl; filter = filter; parent = "/master-status" &>
         </section>
 
         <section>

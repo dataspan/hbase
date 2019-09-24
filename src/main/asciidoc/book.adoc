@@ -40,11 +40,13 @@
 :leveloffset: 0
 
 // Logo for HTML -- doesn't render in PDF
+ifdef::backend-html5[]
 ++++
 <div>
   <a href="https://hbase.apache.org"><img src="images/hbase_logo_with_orca.png" alt="Apache HBase Logo" /></a>
 </div>
 ++++
+endif::[]
 
 // The directory is called _chapters because asciidoctor skips direct
 // processing of files found in directories starting with an _. This
@@ -69,6 +71,7 @@ include::_chapters/external_apis.adoc[]
 include::_chapters/thrift_filter_language.adoc[]
 include::_chapters/cp.adoc[]
 include::_chapters/performance.adoc[]
+include::_chapters/profiler.adoc[]
 include::_chapters/troubleshooting.adoc[]
 include::_chapters/case_studies.adoc[]
 include::_chapters/ops_mgt.adoc[]

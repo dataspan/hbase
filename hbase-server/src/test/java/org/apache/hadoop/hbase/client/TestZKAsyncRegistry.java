@@ -18,10 +18,13 @@
 package org.apache.hadoop.hbase.client;
 
 import static org.apache.hadoop.hbase.HConstants.META_REPLICAS_NUM;
+import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNotSame;
+import static org.junit.Assert.assertThat;
+import static org.junit.Assert.fail;
 
 import java.io.IOException;
 import java.util.concurrent.ExecutionException;
@@ -61,7 +64,11 @@ public class TestZKAsyncRegistry {
   public static void setUp() throws Exception {
     TEST_UTIL.getConfiguration().setInt(META_REPLICAS_NUM, 3);
     TEST_UTIL.startMiniCluster(3);
-    REGISTRY = new ZKAsyncRegistry(TEST_UTIL.getConfiguration());
+    Configuration conf = new Configuration(TEST_UTIL.getConfiguration());
+    // make sure that we do not depend on this config when getting locations for meta replicas, see
+    // HBASE-21658.
+    conf.setInt(META_REPLICAS_NUM, 1);
+    REGISTRY = new ZKAsyncRegistry(conf);
   }
 
   @AfterClass
@@ -108,6 +115,20 @@ public class TestZKAsyncRegistry {
       }
     } finally {
       LOG.info("DONE!");
+    }
+  }
+
+  @Test
+  public void testNoMetaAvailable() throws InterruptedException {
+    Configuration conf = new Configuration(TEST_UTIL.getConfiguration());
+    conf.set("zookeeper.znode.metaserver", "whatever");
+    try (ZKAsyncRegistry registry = new ZKAsyncRegistry(conf)) {
+      try {
+        registry.getMetaRegionLocation().get();
+        fail("Should have failed since we set an incorrect meta znode prefix");
+      } catch (ExecutionException e) {
+        assertThat(e.getCause(), instanceOf(IOException.class));
+      }
     }
   }
 }

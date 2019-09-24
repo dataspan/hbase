@@ -84,7 +84,7 @@ public final class HConstants {
   /**
    * Status codes used for return values of bulk operations.
    */
-  @InterfaceAudience.Private
+  @InterfaceAudience.LimitedPrivate(HBaseInterfaceAudience.COPROC)
   public enum OperationStatusCode {
     NOT_RUN,
     SUCCESS,
@@ -527,11 +527,31 @@ public final class HConstants {
   /** The upper-half split region column qualifier */
   public static final byte [] SPLITB_QUALIFIER = Bytes.toBytes("splitB");
 
-  /** The lower-half merge region column qualifier */
-  public static final byte[] MERGEA_QUALIFIER = Bytes.toBytes("mergeA");
+  /**
+   * Merge qualifier prefix.
+   * We used to only allow two regions merge; mergeA and mergeB.
+   * Now we allow many to merge. Each region to merge will be referenced
+   * in a column whose qualifier starts with this define.
+   */
+  public static final String MERGE_QUALIFIER_PREFIX_STR = "merge";
+  public static final byte [] MERGE_QUALIFIER_PREFIX =
+      Bytes.toBytes(MERGE_QUALIFIER_PREFIX_STR);
 
-  /** The upper-half merge region column qualifier */
-  public static final byte[] MERGEB_QUALIFIER = Bytes.toBytes("mergeB");
+  /**
+   * The lower-half merge region column qualifier
+   * @deprecated Since 2.3.0 and 2.2.1. Not used anymore. Instead we look for
+   *   the {@link #MERGE_QUALIFIER_PREFIX_STR} prefix.
+   */
+  @Deprecated
+  public static final byte[] MERGEA_QUALIFIER = Bytes.toBytes(MERGE_QUALIFIER_PREFIX_STR + "A");
+
+  /**
+   * The upper-half merge region column qualifier
+   * @deprecated Since 2.3.0 and 2.2.1. Not used anymore. Instead we look for
+   *   the {@link #MERGE_QUALIFIER_PREFIX_STR} prefix.
+   */
+  @Deprecated
+  public static final byte[] MERGEB_QUALIFIER = Bytes.toBytes(MERGE_QUALIFIER_PREFIX_STR + "B");
 
   /** The catalog family as a string*/
   public static final String TABLE_FAMILY_STR = "table";
@@ -1340,6 +1360,12 @@ public final class HConstants {
   public static final long HBASE_CLIENT_FAST_FAIL_THREASHOLD_MS_DEFAULT =
       60000;
 
+  public static final String HBASE_CLIENT_FAILURE_MAP_CLEANUP_INTERVAL_MS =
+          "hbase.client.failure.map.cleanup.interval";
+
+  public static final long HBASE_CLIENT_FAILURE_MAP_CLEANUP_INTERVAL_MS_DEFAULT =
+          600000;
+
   public static final String HBASE_CLIENT_FAST_FAIL_CLEANUP_MS_DURATION_MS =
       "hbase.client.fast.fail.cleanup.duration";
 
@@ -1412,6 +1438,29 @@ public final class HConstants {
   public static final String DEFAULT_LOSSY_COUNTING_ERROR_RATE =
       "hbase.util.default.lossycounting.errorrate";
   public static final String NOT_IMPLEMENTED = "Not implemented";
+
+  /**
+   * Configurations for master executor services.
+   */
+  public static final String MASTER_OPEN_REGION_THREADS =
+      "hbase.master.executor.openregion.threads";
+  public static final int MASTER_OPEN_REGION_THREADS_DEFAULT = 5;
+
+  public static final String MASTER_CLOSE_REGION_THREADS =
+      "hbase.master.executor.closeregion.threads";
+  public static final int MASTER_CLOSE_REGION_THREADS_DEFAULT = 5;
+
+  public static final String MASTER_SERVER_OPERATIONS_THREADS =
+      "hbase.master.executor.serverops.threads";
+  public static final int MASTER_SERVER_OPERATIONS_THREADS_DEFAULT = 5;
+
+  public static final String MASTER_META_SERVER_OPERATIONS_THREADS =
+      "hbase.master.executor.meta.serverops.threads";
+  public static final int MASTER_META_SERVER_OPERATIONS_THREADS_DEFAULT = 5;
+
+  public static final String MASTER_LOG_REPLAY_OPS_THREADS =
+      "hbase.master.executor.logreplayops.threads";
+  public static final int MASTER_LOG_REPLAY_OPS_THREADS_DEFAULT = 10;
 
   private HConstants() {
     // Can't be instantiated with this ctor.

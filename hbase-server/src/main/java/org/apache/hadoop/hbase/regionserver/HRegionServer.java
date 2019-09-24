@@ -62,6 +62,7 @@ import org.apache.hadoop.hbase.ChoreService;
 import org.apache.hadoop.hbase.ClockOutOfSyncException;
 import org.apache.hadoop.hbase.CoordinatedStateManager;
 import org.apache.hadoop.hbase.DoNotRetryIOException;
+import org.apache.hadoop.hbase.FailedCloseWALAfterInitializedErrorException;
 import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.HBaseInterfaceAudience;
 import org.apache.hadoop.hbase.HConstants;
@@ -342,6 +343,11 @@ public class HRegionServer extends HasThread implements
   protected final int threadWakeFrequency;
   protected final int msgInterval;
 
+  private static final String PERIOD_COMPACTION = "hbase.regionserver.compaction.check.period";
+  private final int compactionCheckFrequency;
+  private static final String PERIOD_FLUSH = "hbase.regionserver.flush.check.period";
+  private final int flushCheckFrequency;
+
   protected final int numRegionsToReport;
 
   // Stub to do region server status calls against the master.
@@ -556,6 +562,8 @@ public class HRegionServer extends HasThread implements
       this.numRetries = this.conf.getInt(HConstants.HBASE_CLIENT_RETRIES_NUMBER,
           HConstants.DEFAULT_HBASE_CLIENT_RETRIES_NUMBER);
       this.threadWakeFrequency = conf.getInt(HConstants.THREAD_WAKE_FREQUENCY, 10 * 1000);
+      this.compactionCheckFrequency = conf.getInt(PERIOD_COMPACTION, this.threadWakeFrequency);
+      this.flushCheckFrequency = conf.getInt(PERIOD_FLUSH, this.threadWakeFrequency);
       this.msgInterval = conf.getInt("hbase.regionserver.msginterval", 3 * 1000);
 
       this.sleeper = new Sleeper(this.msgInterval, this);
@@ -1039,9 +1047,11 @@ public class HRegionServer extends HasThread implements
       Timer abortMonitor = new Timer("Abort regionserver monitor", true);
       TimerTask abortTimeoutTask = null;
       try {
-        abortTimeoutTask =
-            Class.forName(conf.get(ABORT_TIMEOUT_TASK, SystemExitWhenAbortTimeout.class.getName()))
-                .asSubclass(TimerTask.class).getDeclaredConstructor().newInstance();
+        Constructor<? extends TimerTask> timerTaskCtor =
+          Class.forName(conf.get(ABORT_TIMEOUT_TASK, SystemExitWhenAbortTimeout.class.getName()))
+            .asSubclass(TimerTask.class).getDeclaredConstructor();
+        timerTaskCtor.setAccessible(true);
+        abortTimeoutTask = timerTaskCtor.newInstance();
       } catch (Exception e) {
         LOG.warn("Initialize abort timeout task failed", e);
       }
@@ -1589,9 +1599,8 @@ public class HRegionServer extends HasThread implements
           MemStoreLAB.POOL_INITIAL_SIZE_DEFAULT);
       int chunkSize = conf.getInt(MemStoreLAB.CHUNK_SIZE_KEY, MemStoreLAB.CHUNK_SIZE_DEFAULT);
       // init the chunkCreator
-      ChunkCreator chunkCreator =
-          ChunkCreator.initialize(chunkSize, offheap, globalMemStoreSize, poolSizePercentage,
-      initialCountPercentage, this.hMemManager);
+      ChunkCreator.initialize(chunkSize, offheap, globalMemStoreSize, poolSizePercentage,
+        initialCountPercentage, this.hMemManager);
     }
   }
 
@@ -1905,8 +1914,7 @@ public class HRegionServer extends HasThread implements
     this.procedureResultReporter = new RemoteProcedureResultReporter(this);
 
     // Create the CompactedFileDischarger chore executorService. This chore helps to
-    // remove the compacted files
-    // that will no longer be used in reads.
+    // remove the compacted files that will no longer be used in reads.
     // Default is 2 mins. The default value for TTLCleaner is 5 mins so we set this to
     // 2 mins so that compacted files can be archived before the TTLCleaner runs
     int cleanerInterval =
@@ -1996,8 +2004,8 @@ public class HRegionServer extends HasThread implements
 
     // Background thread to check for compactions; needed if region has not gotten updates
     // in a while. It will take care of not checking too frequently on store-by-store basis.
-    this.compactionChecker = new CompactionChecker(this, this.threadWakeFrequency, this);
-    this.periodicFlusher = new PeriodicMemStoreFlusher(this.threadWakeFrequency, this);
+    this.compactionChecker = new CompactionChecker(this, this.compactionCheckFrequency, this);
+    this.periodicFlusher = new PeriodicMemStoreFlusher(this.flushCheckFrequency, this);
     this.leases = new Leases(this.threadWakeFrequency);
 
     // Create the thread to clean the moved regions list
@@ -2124,11 +2132,17 @@ public class HRegionServer extends HasThread implements
 
   @Override
   public WAL getWAL(RegionInfo regionInfo) throws IOException {
-    WAL wal = walFactory.getWAL(regionInfo);
-    if (this.walRoller != null) {
-      this.walRoller.addWAL(wal);
+    try {
+      WAL wal = walFactory.getWAL(regionInfo);
+      if (this.walRoller != null) {
+        this.walRoller.addWAL(wal);
+      }
+      return wal;
+    }catch (FailedCloseWALAfterInitializedErrorException ex) {
+      // see HBASE-21751 for details
+      abort("wal can not clean up after init failed", ex);
+      throw ex;
     }
-    return wal;
   }
 
   public LogRoller getWalRoller() {
@@ -2378,7 +2392,7 @@ public class HRegionServer extends HasThread implements
     } else {
       LOG.error(HBaseMarkers.FATAL, msg);
     }
-    this.abortRequested = true;
+    setAbortRequested();
     // HBASE-4014: show list of coprocessors that were loaded to help debug
     // regionserver crashes.Note that we're implicitly using
     // java.util.HashSet's toString() method to print the coprocessor names.
@@ -2409,6 +2423,10 @@ public class HRegionServer extends HasThread implements
     }
     // shutdown should be run as the internal user
     stop(reason, true, null);
+  }
+
+  protected final void setAbortRequested() {
+    this.abortRequested = true;
   }
 
   /**
@@ -2840,27 +2858,6 @@ public class HRegionServer extends HasThread implements
   @Override
   public CompactionRequester getCompactionRequestor() {
     return this.compactSplitThread;
-  }
-
-  /**
-   * Get the top N most loaded regions this server is serving so we can tell the
-   * master which regions it can reallocate if we're overloaded. TODO: actually
-   * calculate which regions are most loaded. (Right now, we're just grabbing
-   * the first N regions being served regardless of load.)
-   */
-  protected RegionInfo[] getMostLoadedRegions() {
-    ArrayList<RegionInfo> regions = new ArrayList<>();
-    for (Region r : onlineRegions.values()) {
-      if (!r.isAvailable()) {
-        continue;
-      }
-      if (regions.size() < numRegionsToReport) {
-        regions.add(r.getRegionInfo());
-      } else {
-        break;
-      }
-    }
-    return regions.toArray(new RegionInfo[regions.size()]);
   }
 
   @Override
@@ -3697,6 +3694,11 @@ public class HRegionServer extends HasThread implements
       old.stop("configuration change");
     }
     this.flushThroughputController = FlushThroughputControllerFactory.create(this, newConf);
+    try {
+      Superusers.initialize(newConf);
+    } catch (IOException e) {
+      LOG.warn("Failed to initialize SuperUsers on reloading of the configuration");
+    }
   }
 
   @Override
@@ -3772,11 +3774,18 @@ public class HRegionServer extends HasThread implements
    * Force to terminate region server when abort timeout.
    */
   private static class SystemExitWhenAbortTimeout extends TimerTask {
+
+    public SystemExitWhenAbortTimeout() {
+
+    }
+
     @Override
     public void run() {
-      LOG.warn("Aborting region server timed out, terminating forcibly. Thread dump to stdout.");
+      LOG.warn("Aborting region server timed out, terminating forcibly" +
+          " and does not wait for any running shutdown hooks or finalizers to finish their work." +
+          " Thread dump to stdout.");
       Threads.printThreadInfo(System.out, "Zombie HRegionServer");
-      System.exit(1);
+      Runtime.getRuntime().halt(1);
     }
   }
 }

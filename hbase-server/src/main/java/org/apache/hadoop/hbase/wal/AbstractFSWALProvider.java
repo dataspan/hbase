@@ -31,6 +31,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hbase.FailedCloseWALAfterInitializedErrorException;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.client.RegionInfo;
@@ -150,6 +151,20 @@ public abstract class AbstractFSWALProvider<T extends AbstractFSWAL<?>> implemen
         return walCopy;
       }
       walCopy = createWAL();
+      boolean succ = false;
+      try {
+        walCopy.init();
+        succ = true;
+      } finally {
+        if (!succ) {
+          try {
+            walCopy.close();
+          } catch (Throwable t) {
+            throw new FailedCloseWALAfterInitializedErrorException(
+              "Failed close after init wal failed.", t);
+          }
+        }
+      }
       wal = walCopy;
       return walCopy;
     } finally {
@@ -418,8 +433,8 @@ public abstract class AbstractFSWALProvider<T extends AbstractFSWAL<?>> implemen
    * @throws IOException exception
    */
   public static Path getArchivedLogPath(Path path, Configuration conf) throws IOException {
-    Path rootDir = FSUtils.getRootDir(conf);
-    Path oldLogDir = new Path(rootDir, HConstants.HREGION_OLDLOGDIR_NAME);
+    Path walRootDir = FSUtils.getWALRootDir(conf);
+    Path oldLogDir = new Path(walRootDir, HConstants.HREGION_OLDLOGDIR_NAME);
     if (conf.getBoolean(SEPARATE_OLDLOGDIR, DEFAULT_SEPARATE_OLDLOGDIR)) {
       ServerName serverName = getServerNameFromWALDirectoryName(path);
       if (serverName == null) {
@@ -429,7 +444,7 @@ public abstract class AbstractFSWALProvider<T extends AbstractFSWAL<?>> implemen
       oldLogDir = new Path(oldLogDir, serverName.getServerName());
     }
     Path archivedLogLocation = new Path(oldLogDir, path.getName());
-    final FileSystem fs = FSUtils.getCurrentFileSystem(conf);
+    final FileSystem fs = FSUtils.getWALFileSystem(conf);
 
     if (fs.exists(archivedLogLocation)) {
       LOG.info("Log " + path + " was moved to " + archivedLogLocation);

@@ -215,6 +215,7 @@ public class TestWALLockup {
     FileSystem fs = FileSystem.get(CONF);
     Path rootDir = new Path(dir + getName());
     DodgyFSLog dodgyWAL = new DodgyFSLog(fs, rootDir, getName(), CONF);
+    dodgyWAL.init();
     Path originalWAL = dodgyWAL.getCurrentFileName();
     // I need a log roller running.
     LogRoller logRoller = new LogRoller(server, services);
@@ -314,7 +315,7 @@ public class TestWALLockup {
    * If below is broken, we will see this test timeout because RingBufferEventHandler was stuck in
    * attainSafePoint. Everyone will wait for sync to finish forever. See HBASE-14317.
    */
-  @Test (timeout=30000)
+  @Test
   public void testRingBufferEventHandlerStuckWhenSyncFailed()
     throws IOException, InterruptedException {
 
@@ -390,6 +391,7 @@ public class TestWALLockup {
     FileSystem fs = FileSystem.get(CONF);
     Path rootDir = new Path(dir + getName());
     final DodgyFSLog dodgyWAL = new DodgyFSLog(fs, rootDir, getName(), CONF);
+    dodgyWAL.init();
     // I need a log roller running.
     LogRoller logRoller = new LogRoller(server, services);
     logRoller.addWAL(dodgyWAL);
@@ -434,7 +436,7 @@ public class TestWALLockup {
       // To stop logRoller, its server has to say it is stopped.
       Mockito.when(server.isStopped()).thenReturn(true);
       if (logRoller != null) {
-        logRoller.interrupt();
+        logRoller.close();
       }
       if (dodgyWAL != null) {
         dodgyWAL.close();

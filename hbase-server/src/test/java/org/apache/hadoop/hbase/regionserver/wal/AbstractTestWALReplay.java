@@ -1098,6 +1098,7 @@ public abstract class AbstractTestWALReplay {
 
   private MockWAL createMockWAL() throws IOException {
     MockWAL wal = new MockWAL(fs, hbaseRootDir, logName, conf);
+    wal.init();
     // Set down maximum recovery so we dfsclient doesn't linger retrying something
     // long gone.
     HBaseTestingUtility.setMaxRecoveryErrorCount(wal.getOutputStream(), 1);
@@ -1157,9 +1158,8 @@ public abstract class AbstractTestWALReplay {
   private FSWALEntry createFSWALEntry(HTableDescriptor htd, HRegionInfo hri, long sequence,
       byte[] rowName, byte[] family, EnvironmentEdge ee, MultiVersionConcurrencyControl mvcc,
       int index, NavigableMap<byte[], Integer> scopes) throws IOException {
-    FSWALEntry entry =
-        new FSWALEntry(sequence, createWALKey(htd.getTableName(), hri, mvcc, scopes), createWALEdit(
-          rowName, family, ee, index), hri, true);
+    FSWALEntry entry = new FSWALEntry(sequence, createWALKey(htd.getTableName(), hri, mvcc, scopes),
+      createWALEdit(rowName, family, ee, index), hri, true, null);
     entry.stampRegionSequenceId(mvcc.begin());
     return entry;
   }

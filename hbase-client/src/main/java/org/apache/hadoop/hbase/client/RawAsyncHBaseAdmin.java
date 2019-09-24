@@ -34,6 +34,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
@@ -375,7 +376,7 @@ class RawAsyncHBaseAdmin implements AsyncAdmin {
       @Override
       public void run(PRESP resp) {
         if (controller.failed()) {
-          future.completeExceptionally(new IOException(controller.errorText()));
+          future.completeExceptionally(controller.getFailed());
         } else {
           try {
             future.complete(respConverter.convert(resp));
@@ -647,7 +648,11 @@ class RawAsyncHBaseAdmin implements AsyncAdmin {
     CompletableFuture<Boolean> future = new CompletableFuture<>();
     addListener(isTableEnabled(tableName), (enabled, error) -> {
       if (error != null) {
-        future.completeExceptionally(error);
+        if (error instanceof TableNotFoundException) {
+          future.complete(false);
+        } else {
+          future.completeExceptionally(error);
+        }
         return;
       }
       if (!enabled) {
@@ -1050,6 +1055,9 @@ class RawAsyncHBaseAdmin implements AsyncAdmin {
             future.completeExceptionally(err);
             return;
           }
+          if (locations == null || locations.isEmpty()) {
+            future.completeExceptionally(new TableNotFoundException(tableName));
+          }
           CompletableFuture<?>[] compactFutures =
             locations.stream().filter(l -> l.getRegion() != null)
               .filter(l -> !l.getRegion().isOffline()).filter(l -> l.getServerName() != null)
@@ -1281,7 +1289,7 @@ class RawAsyncHBaseAdmin implements AsyncAdmin {
     if (splitPoint == null) {
       return failedFuture(new IllegalArgumentException("splitPoint can not be null."));
     }
-    addListener(connection.getRegionLocator(tableName).getRegionLocation(splitPoint),
+    addListener(connection.getRegionLocator(tableName).getRegionLocation(splitPoint, true),
       (loc, err) -> {
         if (err != null) {
           result.completeExceptionally(err);
@@ -1306,6 +1314,10 @@ class RawAsyncHBaseAdmin implements AsyncAdmin {
   public CompletableFuture<Void> splitRegion(byte[] regionName) {
     CompletableFuture<Void> future = new CompletableFuture<>();
     addListener(getRegionLocation(regionName), (location, err) -> {
+      if (err != null) {
+        future.completeExceptionally(err);
+        return;
+      }
       RegionInfo regionInfo = location.getRegion();
       if (regionInfo.getReplicaId() != RegionInfo.DEFAULT_REPLICA_ID) {
         future
@@ -1336,6 +1348,10 @@ class RawAsyncHBaseAdmin implements AsyncAdmin {
       "splitPoint is null. If you don't specify a splitPoint, use splitRegion(byte[]) instead");
     CompletableFuture<Void> future = new CompletableFuture<>();
     addListener(getRegionLocation(regionName), (location, err) -> {
+      if (err != null) {
+        future.completeExceptionally(err);
+        return;
+      }
       RegionInfo regionInfo = location.getRegion();
       if (regionInfo.getReplicaId() != RegionInfo.DEFAULT_REPLICA_ID) {
         future
@@ -2849,7 +2865,7 @@ class RawAsyncHBaseAdmin implements AsyncAdmin {
             future.completeExceptionally(err);
             return;
           }
-          List<CompactionState> regionStates = new ArrayList<>();
+          ConcurrentLinkedQueue<CompactionState> regionStates = new ConcurrentLinkedQueue<>();
           List<CompletableFuture<CompactionState>> futures = new ArrayList<>();
           locations.stream().filter(loc -> loc.getServerName() != null)
             .filter(loc -> loc.getRegion() != null).filter(loc -> !loc.getRegion().isOffline())
@@ -2891,9 +2907,9 @@ class RawAsyncHBaseAdmin implements AsyncAdmin {
                     case NONE:
                     default:
                   }
-                  if (!future.isDone()) {
-                    future.complete(state);
-                  }
+                }
+                if (!future.isDone()) {
+                  future.complete(state);
                 }
               }
             });

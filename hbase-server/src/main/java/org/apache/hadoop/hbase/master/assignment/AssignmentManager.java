@@ -23,6 +23,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -155,6 +156,8 @@ public class AssignmentManager implements ServerListener {
   private final AtomicBoolean running = new AtomicBoolean(false);
   private final RegionStates regionStates = new RegionStates();
   private final RegionStateStore regionStateStore;
+
+  private final Map<ServerName, Set<byte[]>> rsReports = new HashMap<>();
 
   private final boolean shouldAssignRegionsWithFavoredNodes;
   private final int assignDispatchWaitQueueMaxSize;
@@ -747,9 +750,8 @@ public class AssignmentManager implements ServerListener {
     return new SplitTableRegionProcedure(getProcedureEnvironment(), regionToSplit, splitKey);
   }
 
-  public MergeTableRegionsProcedure createMergeProcedure(final RegionInfo regionToMergeA,
-      final RegionInfo regionToMergeB) throws IOException {
-    return new MergeTableRegionsProcedure(getProcedureEnvironment(), regionToMergeA,regionToMergeB);
+  public MergeTableRegionsProcedure createMergeProcedure(RegionInfo ... ris) throws IOException {
+    return new MergeTableRegionsProcedure(getProcedureEnvironment(), ris, false);
   }
 
   /**
@@ -960,6 +962,11 @@ public class AssignmentManager implements ServerListener {
         LOG.warn("Got a report from a server result in state " + serverNode.getState());
         return;
       }
+    }
+
+    // Track the regionserver reported online regions in memory.
+    synchronized (rsReports) {
+      rsReports.put(serverName, regionNames);
     }
 
     if (regionNames.isEmpty()) {
@@ -1331,6 +1338,12 @@ public class AssignmentManager implements ServerListener {
 
   public long submitServerCrash(final ServerName serverName, final boolean shouldSplitWal) {
     boolean carryingMeta = isCarryingMeta(serverName);
+
+    // Remove the in-memory rsReports result
+    synchronized (rsReports) {
+      rsReports.remove(serverName);
+    }
+
     ProcedureExecutor<MasterProcedureEnv> procExec = this.master.getMasterProcedureExecutor();
     long pid = procExec.submitProcedure(new ServerCrashProcedure(procExec.getEnvironment(),
         serverName, shouldSplitWal, carryingMeta));
@@ -1529,23 +1542,28 @@ public class AssignmentManager implements ServerListener {
   }
 
   /**
-   * When called here, the merge has happened. The two merged regions have been
+   * When called here, the merge has happened. The merged regions have been
    * unassigned and the above markRegionClosed has been called on each so they have been
    * disassociated from a hosting Server. The merged region will be open after this call. The
-   * merged regions are removed from hbase:meta below> Later they are deleted from the filesystem
+   * merged regions are removed from hbase:meta below. Later they are deleted from the filesystem
    * by the catalog janitor running against hbase:meta. It notices when the merged region no
-   * longer holds references to the old regions.
+   * longer holds references to the old regions (References are deleted after a compaction
+   * rewrites what the Reference points at but not until the archiver chore runs, are the
+   * References removed).
    */
   public void markRegionAsMerged(final RegionInfo child, final ServerName serverName,
-      final RegionInfo mother, final RegionInfo father) throws IOException {
+        RegionInfo [] mergeParents)
+      throws IOException {
     final RegionStateNode node = regionStates.getOrCreateRegionStateNode(child);
     node.setState(State.MERGED);
-    regionStates.deleteRegion(mother);
-    regionStates.deleteRegion(father);
-    regionStateStore.mergeRegions(child, mother, father, serverName);
+    for (RegionInfo ri: mergeParents) {
+      regionStates.deleteRegion(ri);
+
+    }
+    regionStateStore.mergeRegions(child, mergeParents, serverName);
     if (shouldAssignFavoredNodes(child)) {
       ((FavoredNodesPromoter)getBalancer()).
-        generateFavoredNodesForMergedRegion(child, mother, father);
+        generateFavoredNodesForMergedRegion(child, mergeParents);
     }
   }
 
@@ -1764,6 +1782,11 @@ public class AssignmentManager implements ServerListener {
 
     if (plan.isEmpty()) return;
 
+    List<RegionInfo> bogusRegions = plan.remove(LoadBalancer.BOGUS_SERVER_NAME);
+    if (bogusRegions != null && !bogusRegions.isEmpty()) {
+      addToPendingAssignment(regions, bogusRegions);
+    }
+
     int evcount = 0;
     for (Map.Entry<ServerName, List<RegionInfo>> entry: plan.entrySet()) {
       final ServerName server = entry.getKey();
@@ -1876,5 +1899,16 @@ public class AssignmentManager implements ServerListener {
   @VisibleForTesting
   MasterServices getMaster() {
     return master;
+  }
+
+  /**
+   * @return a snapshot of rsReports
+   */
+  public Map<ServerName, Set<byte[]>> getRSReports() {
+    Map<ServerName, Set<byte[]>> rsReportsSnapshot = new HashMap<>();
+    synchronized (rsReports) {
+      rsReports.entrySet().forEach(e -> rsReportsSnapshot.put(e.getKey(), e.getValue()));
+    }
+    return rsReportsSnapshot;
   }
 }

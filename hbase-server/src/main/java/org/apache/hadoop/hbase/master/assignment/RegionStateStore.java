@@ -19,8 +19,10 @@ package org.apache.hadoop.hbase.master.assignment;
 
 import java.io.IOException;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
-import org.apache.hadoop.fs.FileSystem;
+import java.util.Map;
+
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.CellBuilderFactory;
 import org.apache.hadoop.hbase.CellBuilderType;
@@ -35,13 +37,13 @@ import org.apache.hadoop.hbase.client.RegionInfo;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Table;
 import org.apache.hadoop.hbase.client.TableDescriptor;
+import org.apache.hadoop.hbase.master.MasterFileSystem;
 import org.apache.hadoop.hbase.master.MasterServices;
 import org.apache.hadoop.hbase.master.RegionState.State;
 import org.apache.hadoop.hbase.procedure2.Procedure;
 import org.apache.hadoop.hbase.procedure2.util.StringUtils;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.EnvironmentEdgeManager;
-import org.apache.hadoop.hbase.util.FSUtils;
 import org.apache.hadoop.hbase.wal.WALSplitter;
 import org.apache.hadoop.hbase.zookeeper.MetaTableLocator;
 import org.apache.yetus.audience.InterfaceAudience;
@@ -217,10 +219,9 @@ public class RegionStateStore {
   }
 
   private long getOpenSeqNumForParentRegion(RegionInfo region) throws IOException {
-    FileSystem walFS = master.getMasterWalManager().getFileSystem();
-    long maxSeqId =
-        WALSplitter.getMaxRegionSequenceId(walFS, FSUtils.getWALRegionDir(
-            master.getConfiguration(), region.getTable(), region.getEncodedName()));
+    MasterFileSystem fs = master.getMasterFileSystem();
+    long maxSeqId = WALSplitter.getMaxRegionSequenceId(master.getConfiguration(), region,
+      fs::getFileSystem, fs::getWALFileSystem);
     return maxSeqId > 0 ? maxSeqId + 1 : HConstants.NO_SEQNUM;
   }
 
@@ -241,17 +242,16 @@ public class RegionStateStore {
   // ============================================================================================
   //  Update Region Merging State helpers
   // ============================================================================================
-  public void mergeRegions(RegionInfo child, RegionInfo hriA, RegionInfo hriB,
-      ServerName serverName) throws IOException {
+  public void mergeRegions(RegionInfo child, RegionInfo [] parents, ServerName serverName)
+      throws IOException {
     TableDescriptor htd = getTableDescriptor(child.getTable());
-    long regionAOpenSeqNum = -1L;
-    long regionBOpenSeqNum = -1L;
-    if (htd.hasGlobalReplicationScope()) {
-      regionAOpenSeqNum = getOpenSeqNumForParentRegion(hriA);
-      regionBOpenSeqNum = getOpenSeqNumForParentRegion(hriB);
+    boolean globalScope = htd.hasGlobalReplicationScope();
+    Map<RegionInfo, Long> parentSeqNums = new HashMap<>(parents.length);
+    for (RegionInfo ri: parents) {
+      parentSeqNums.put(ri, globalScope? getOpenSeqNumForParentRegion(ri): -1);
     }
-    MetaTableAccessor.mergeRegions(master.getConnection(), child, hriA, regionAOpenSeqNum, hriB,
-      regionBOpenSeqNum, serverName, getRegionReplication(htd));
+    MetaTableAccessor.mergeRegions(master.getConnection(), child, parentSeqNums,
+        serverName, getRegionReplication(htd));
   }
 
   // ============================================================================================
@@ -262,7 +262,7 @@ public class RegionStateStore {
   }
 
   public void deleteRegions(final List<RegionInfo> regions) throws IOException {
-    MetaTableAccessor.deleteRegions(master.getConnection(), regions);
+    MetaTableAccessor.deleteRegionInfos(master.getConnection(), regions);
   }
 
   // ==========================================================================

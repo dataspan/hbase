@@ -27,6 +27,7 @@
   import="java.util.List"
   import="java.util.Map"
   import="java.util.TreeMap"
+  import=" java.util.concurrent.TimeUnit"
   import="org.apache.commons.lang3.StringEscapeUtils"
   import="org.apache.hadoop.conf.Configuration"
   import="org.apache.hadoop.hbase.HColumnDescriptor"
@@ -35,8 +36,10 @@
   import="org.apache.hadoop.hbase.ServerName"
   import="org.apache.hadoop.hbase.TableName"
   import="org.apache.hadoop.hbase.TableNotFoundException"
-  import="org.apache.hadoop.hbase.client.Admin"
+  import="org.apache.hadoop.hbase.client.AsyncAdmin"
+  import="org.apache.hadoop.hbase.client.AsyncConnection"
   import="org.apache.hadoop.hbase.client.CompactionState"
+  import="org.apache.hadoop.hbase.client.ConnectionFactory"
   import="org.apache.hadoop.hbase.client.RegionInfo"
   import="org.apache.hadoop.hbase.client.RegionInfoBuilder"
   import="org.apache.hadoop.hbase.client.RegionLocator"
@@ -119,6 +122,8 @@
       pageTitle = "Table: " + escaped_fqtn;
   }
   pageContext.setAttribute("pageTitle", pageTitle);
+  AsyncConnection connection = ConnectionFactory.createAsyncConnection(master.getConfiguration()).get();
+  AsyncAdmin admin = connection.getAdminBuilder().setOperationTimeout(5, TimeUnit.SECONDS).build();
 %>
 
 <jsp:include page="header.jsp">
@@ -126,7 +131,7 @@
 </jsp:include>
 
 <%
-if ( fqtn != null ) {
+if (fqtn != null && master.isInitialized()) {
   try {
   table = master.getConnection().getTable(TableName.valueOf(fqtn));
   if (table.getTableDescriptor().getRegionReplication() > 1) {
@@ -145,7 +150,6 @@ if ( fqtn != null ) {
         </div>
 <p><hr><p>
 <%
-  try (Admin admin = master.getConnection().getAdmin()) {
     if (action.equals("split")) {
       if (key != null && key.length() > 0) {
         admin.split(TableName.valueOf(fqtn), Bytes.toBytes(key));
@@ -156,7 +160,7 @@ if ( fqtn != null ) {
     %> Split request accepted. <%
     } else if (action.equals("compact")) {
       if (key != null && key.length() > 0) {
-        List<RegionInfo> regions = admin.getRegions(TableName.valueOf(fqtn));
+        List<RegionInfo> regions = admin.getRegions(TableName.valueOf(fqtn)).get();
         byte[] row = Bytes.toBytes(key);
 
         for (RegionInfo region : regions) {
@@ -174,7 +178,6 @@ if ( fqtn != null ) {
         }
         %> Merge request accepted. <%
     }
-  }
 %>
 <jsp:include page="redirect.jsp" />
 </div>
@@ -228,7 +231,7 @@ if ( fqtn != null ) {
 %>
 <tr>
   <td><%= escapeXml(meta.getRegionNameAsString()) %></td>
-    <td><a href="http://<%= hostAndPort %>/"><%= StringEscapeUtils.escapeHtml4(hostAndPort) %></a></td>
+    <td><a href="http://<%= hostAndPort %>/rs-status/"><%= StringEscapeUtils.escapeHtml4(hostAndPort) %></a></td>
     <td><%= readReq%></td>
     <td><%= writeReq%></td>
     <td><%= fileSize%></td>
@@ -250,8 +253,7 @@ if ( fqtn != null ) {
 </tbody>
 </table>
 <%} else {
-  Admin admin = master.getConnection().getAdmin();
-  RegionLocator r = master.getClusterConnection().getRegionLocator(table.getName());
+  RegionLocator r = master.getConnection().getRegionLocator(table.getName());
   try { %>
 <h2>Table Attributes</h2>
 <table class="table table-striped">
@@ -262,7 +264,7 @@ if ( fqtn != null ) {
   </tr>
   <tr>
       <td>Enabled</td>
-      <td><%= admin.isTableEnabled(table.getName()) %></td>
+      <td><%= admin.isTableEnabled(table.getName()).get() %></td>
       <td>Is the table enabled</td>
   </tr>
   <tr>
@@ -270,7 +272,7 @@ if ( fqtn != null ) {
       <td>
 <%
   try {
-    CompactionState compactionState = admin.getCompactionState(table.getName());
+    CompactionState compactionState = admin.getCompactionState(table.getName()).get();
 %>
 <%= compactionState %>
 <%
@@ -483,7 +485,7 @@ if ( fqtn != null ) {
       ServerMetrics sl = master.getServerManager().getLoad(addr);
       // This port might be wrong if RS actually ended up using something else.
       urlRegionServer =
-          "//" + URLEncoder.encode(addr.getHostname()) + ":" + master.getRegionServerInfoPort(addr) + "/";
+          "//" + URLEncoder.encode(addr.getHostname()) + ":" + master.getRegionServerInfoPort(addr) + "/rs-status";
       if(sl != null) {
         Integer i = regDistribution.get(addr);
         if (null == i) i = Integer.valueOf(0);
@@ -504,7 +506,7 @@ if ( fqtn != null ) {
   if (urlRegionServer != null) {
   %>
   <td>
-     <a href="<%= urlRegionServer %>"><%= StringEscapeUtils.escapeHtml4(addr.getHostname().toString()) + ":" + master.getRegionServerInfoPort(addr) %></a>
+     <a href="<%= urlRegionServer %>"><%= addr == null? "-": StringEscapeUtils.escapeHtml4(addr.getHostname().toString()) + ":" + master.getRegionServerInfoPort(addr) %></a>
   </td>
   <%
   } else {
@@ -556,7 +558,7 @@ if (withReplica) {
 <%
   for (Map.Entry<ServerName, Integer> rdEntry : regDistribution.entrySet()) {
      ServerName addr = rdEntry.getKey();
-     String url = "//" + URLEncoder.encode(addr.getHostname()) + ":" + master.getRegionServerInfoPort(addr) + "/";
+     String url = "//" + URLEncoder.encode(addr.getHostname()) + ":" + master.getRegionServerInfoPort(addr) + "/rs-status";
 %>
 <tr>
   <td><a href="<%= url %>"><%= StringEscapeUtils.escapeHtml4(addr.getHostname().toString()) + ":" + master.getRegionServerInfoPort(addr) %></a></td>
@@ -578,7 +580,7 @@ if (withReplica) {
     %><%= StringEscapeUtils.escapeHtml4(element.toString()) %><%
   }
 } finally {
-  admin.close();
+  connection.close();
 }
 } // end else
 %>
@@ -684,7 +686,7 @@ Actions:
   </div> <%
   }
 }
-  else { // handle the case for fqtn is null with error message + redirect
+  else { // handle the case for fqtn is null or master is not initialized with error message + redirect
 %>
 <div class="container-fluid content">
     <div class="row inner_header">

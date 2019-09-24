@@ -94,6 +94,9 @@ function personality_parse_args
       --hadoop-profile=*)
         HADOOP_PROFILE=${i#*=}
       ;;
+      --skip-errorprone)
+        SKIP_ERRORPRONE=true
+      ;;
     esac
   done
 }
@@ -165,7 +168,7 @@ function personality_modules
     return
   fi
 
-  if [[ ${testtype} == compile ]]; then
+  if [[ ${testtype} == compile ]] && [[ "${SKIP_ERRORPRONE}" != "true" ]]; then
     extra="${extra} -PerrorProne"
   fi
 
@@ -500,32 +503,59 @@ function hadoopcheck_rebuild
 
   # All supported Hadoop versions that we want to test the compilation with
   # See the Hadoop section on prereqs in the HBase Reference Guide
-  hbase_common_hadoop2_versions="2.7.1 2.7.2 2.7.3 2.7.4"
-  if [[ "${PATCH_BRANCH}" = branch-1.* ]] && [[ "${PATCH_BRANCH#branch-1.}" -lt "5" ]]; then
-    yetus_info "Setting Hadoop 2 versions to test based on before-branch-1.5 rules."
+  if [[ "${PATCH_BRANCH}" = branch-1.* ]] && [[ "${PATCH_BRANCH#branch-1.}" -lt "4" ]]; then
+    yetus_info "Setting Hadoop 2 versions to test based on before-branch-1.4 rules."
     if [[ "${QUICK_HADOOPCHECK}" == "true" ]]; then
-      hbase_hadoop2_versions="2.4.1 2.5.2 2.6.5 2.7.4"
+      hbase_hadoop2_versions="2.4.1 2.5.2 2.6.5 2.7.7"
     else
-      hbase_hadoop2_versions="2.4.0 2.4.1 2.5.0 2.5.1 2.5.2 2.6.1 2.6.2 2.6.3 2.6.4 2.6.5 ${hbase_common_hadoop2_versions}"
+      hbase_hadoop2_versions="2.4.0 2.4.1 2.5.0 2.5.1 2.5.2 2.6.1 2.6.2 2.6.3 2.6.4 2.6.5 2.7.1 2.7.2 2.7.3 2.7.4 2.7.5 2.7.6 2.7.7"
+    fi
+  elif [[ "${PATCH_BRANCH}" = branch-1.4 ]]; then
+    yetus_info "Setting Hadoop 2 versions to test based on branch-1.4 rules."
+    if [[ "${QUICK_HADOOPCHECK}" == "true" ]]; then
+      hbase_hadoop2_versions="2.7.7"
+    else
+      hbase_hadoop2_versions="2.7.1 2.7.2 2.7.3 2.7.4 2.7.5 2.7.6 2.7.7"
     fi
   elif [[ "${PATCH_BRANCH}" = branch-2.0 ]]; then
     yetus_info "Setting Hadoop 2 versions to test based on branch-2.0 rules."
     if [[ "${QUICK_HADOOPCHECK}" == "true" ]]; then
-      hbase_hadoop2_versions="2.6.5 2.7.4"
+      hbase_hadoop2_versions="2.6.5 2.7.7 2.8.5"
     else
-      hbase_hadoop2_versions="2.6.1 2.6.2 2.6.3 2.6.4 2.6.5 ${hbase_common_hadoop2_versions}"
+      hbase_hadoop2_versions="2.6.1 2.6.2 2.6.3 2.6.4 2.6.5 2.7.1 2.7.2 2.7.3 2.7.4 2.7.5 2.7.6 2.7.7 2.8.2 2.8.3 2.8.4 2.8.5"
+    fi
+  elif [[ "${PATCH_BRANCH}" = branch-2.1 ]]; then
+    yetus_info "Setting Hadoop 2 versions to test based on branch-2.1 rules."
+    if [[ "${QUICK_HADOOPCHECK}" == "true" ]]; then
+      hbase_hadoop2_versions="2.7.7 2.8.5"
+    else
+      hbase_hadoop2_versions="2.7.1 2.7.2 2.7.3 2.7.4 2.7.5 2.7.6 2.7.7 2.8.2 2.8.3 2.8.4 2.8.5"
     fi
   else
-    yetus_info "Setting Hadoop 2 versions to test based on branch-1.5+/branch-2.1+/master/feature branch rules."
+    yetus_info "Setting Hadoop 2 versions to test based on branch-1.5+/branch-2.2+/master/feature branch rules."
     if [[ "${QUICK_HADOOPCHECK}" == "true" ]]; then
-      hbase_hadoop2_versions="2.7.4"
+      hbase_hadoop2_versions="2.8.5 2.9.2"
     else
-      hbase_hadoop2_versions="${hbase_common_hadoop2_versions}"
+      hbase_hadoop2_versions="2.8.5 2.9.2"
     fi
   fi
-  hbase_hadoop3_versions="3.0.0"
   if [[ "${PATCH_BRANCH}" = branch-1* ]]; then
+    yetus_info "Setting Hadoop 3 versions to test based on branch-1.x rules."
     hbase_hadoop3_versions=""
+  elif [[ "${PATCH_BRANCH}" = branch-2.0 ]] || [[ "${PATCH_BRANCH}" = branch-2.1 ]]; then
+    yetus_info "Setting Hadoop 3 versions to test based on branch-2.0/branch-2.1 rules"
+    if [[ "${QUICK_HADOOPCHECK}" == "true" ]]; then
+      hbase_hadoop3_versions="3.0.3 3.1.2"
+    else
+      hbase_hadoop3_versions="3.0.3 3.1.1 3.1.2"
+    fi
+  else
+    yetus_info "Setting Hadoop 3 versions to test based on branch-2.2+/master/feature branch rules"
+    if [[ "${QUICK_HADOOPCHECK}" == "true" ]]; then
+      hbase_hadoop3_versions="3.1.2"
+    else
+      hbase_hadoop3_versions="3.1.1 3.1.2"
+    fi
   fi
 
   export MAVEN_OPTS="${MAVEN_OPTS}"
@@ -571,6 +601,12 @@ function hadoopcheck_rebuild
   else
     add_vote_table +1 hadoopcheck "Patch does not cause any errors with Hadoop ${hbase_hadoop2_versions}."
   fi
+
+  logfile="${PATCH_DIR}/patch-install-after-hadoopcheck.txt"
+  echo_and_redirect "${logfile}" \
+    $(maven_executor) clean install \
+      -DskipTests -DHBasePatchProcess
+
   return 0
 }
 
@@ -703,6 +739,24 @@ function hbaseanti_patchfile
 
   add_vote_table +1 hbaseanti "" "Patch does not have any anti-patterns."
   return 0
+}
+
+## @description  process the javac output for generating WARNING/ERROR
+## @audience     private
+## @stability    evolving
+## @param        input filename
+## @param        output filename
+# Override the default javac_logfilter so that we can do a sort before outputing the WARNING/ERROR.
+# This is because that the output order of the error prone warnings is not stable, so the diff
+# method will report unexpected errors if we do not sort it. Notice that a simple sort will cause
+# line number being sorted by lexicographical so the output maybe a bit strange to human but it is
+# really hard to sort by file name first and then line number and column number in shell...
+function hbase_javac_logfilter
+{
+  declare input=$1
+  declare output=$2
+
+  ${GREP} -E '\[(ERROR|WARNING)\] /.*\.java:' "${input}" | sort > "${output}"
 }
 
 ## This is named so that yetus will check us right after running tests.

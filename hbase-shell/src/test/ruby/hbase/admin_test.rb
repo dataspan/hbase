@@ -57,6 +57,10 @@ module Hbase
       command(:disable, @test_name)
       assert(!command(:is_enabled, @test_name))
     end
+
+    define_test 'hbck_chore_run' do
+      command(:hbck_chore_run)
+    end
   end
 
     # Simple administration methods tests
@@ -441,6 +445,10 @@ module Hbase
       region = command(:locate_region, @test_name, '')
       encodedRegionName = region.getRegionInfo().getEncodedName()
       command(:unassign, encodedRegionName, true)
+    end
+
+    define_test "list regions should allow table name" do
+      command(:list_regions, @test_name)
     end
   end
 

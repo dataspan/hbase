@@ -861,14 +861,19 @@ It will put a snapshot up into the apache snapshot repository for you.
 
 Everyone is encouraged to try and vote on HBase release candidates.
 Only the votes of PMC members are binding.
-PMC members, please read this WIP doc on policy voting for a release candidate, link:https://github.com/rectang/asfrelease/blob/master/release.md[Release
-                Policy]. [quote]_Before casting +1 binding votes, individuals are required to
-                download the signed source code package onto their own hardware, compile it as
-                provided, and test the resulting executable on their own platform, along with also
-                validating cryptographic signatures and verifying that the package meets the
-                requirements of the ASF policy on releases._ Regards the latter, run +mvn apache-rat:check+ to verify all files are suitably licensed.
-See link:http://search-hadoop.com/m/DHED4dhFaU[HBase, mail # dev - On
-                recent discussion clarifying ASF release policy].
+PMC members, please read this WIP doc on policy voting for a release candidate, link:https://github.com/rectang/asfrelease/blob/master/release.md[Release Policy].
+
+[quote]
+____
+Before casting +1 binding votes, individuals are required to
+download the signed source code package onto their own hardware, compile it as
+provided, and test the resulting executable on their own platform, along with also
+validating cryptographic signatures and verifying that the package meets the
+requirements of the ASF policy on releases.
+____
+
+Regards the latter, run `mvn apache-rat:check` to verify all files are suitably licensed.
+See link:http://search-hadoop.com/m/DHED4dhFaU[HBase, mail # dev - On recent discussion clarifying ASF release policy]
 for how we arrived at this process.
 
 [[hbase.release.announcement]]
@@ -1258,7 +1263,7 @@ ConnectionCount=1 (was 1)
 
 * All tests must be categorized, if not they could be skipped.
 * All tests should be written to be as fast as possible.
-* See <<hbase.unittests,hbase.unittests> for test case categories and corresponding timeouts.
+* See <<hbase.unittests,hbase.unittests>> for test case categories and corresponding timeouts.
   This should ensure a good parallelization for people using it, and ease the analysis when the test fails.
 
 [[hbase.tests.sleeps]]
@@ -1587,6 +1592,18 @@ We use Git for source code management and latest development happens on `master`
 branches for past major/minor/maintenance releases and important features and bug fixes are often
  back-ported to them.
 
+=== Policy for Fix Version in JIRA
+
+To determine if a given fix is in a given release purely from the release numbers following rules
+are defined:
+
+Fix version of X.Y.Z => fixed in all releases X.Y.Z' (where Z' = Z). +
+Fix version of X.Y.0 => fixed in all releases X.Y'.* (where Y' = Y). +
+Fix version of X.0.0 => fixed in all releases X'.\*.* (where X' = X). +
+
+By this policy, fix version of 1.3.0 implies 1.4.0, but 1.3.2 does not imply 1.4.0 as we could not
+tell purely from the numbers which release came first.
+
 [[code.standards]]
 === Code Standards
 
@@ -1798,18 +1815,6 @@ Likewise, don't add unrelated cleanup or refactorings outside the scope of your 
 ===== Ambiguous Unit Tests
 
 Make sure that you're clear about what you are testing in your unit tests and why.
-
-[[common.patch.feedback.writable]]
-===== Implementing Writable
-
-.Applies pre-0.96 only
-[NOTE]
-====
-In 0.96, HBase moved to protocol buffers (protobufs). The below section on Writables applies to 0.94.x and previous, not to 0.96 and beyond.
-====
-
-Every class returned by RegionServers must implement the `Writable` interface.
-If you are creating a new class that needs to implement this interface, do not forget the default constructor.
 
 ==== Garbage-Collection Conserving Guidelines
 

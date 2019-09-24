@@ -164,6 +164,8 @@ import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.EnableTabl
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.EnableTableResponse;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.ExecProcedureRequest;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.ExecProcedureResponse;
+import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.FixMetaRequest;
+import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.FixMetaResponse;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.GetClusterStatusRequest;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.GetClusterStatusResponse;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.GetCompletedSnapshotsRequest;
@@ -237,6 +239,8 @@ import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.RunCatalog
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.RunCatalogScanResponse;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.RunCleanerChoreRequest;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.RunCleanerChoreResponse;
+import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.RunHbckChoreRequest;
+import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.RunHbckChoreResponse;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.SecurityCapabilitiesRequest;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.SecurityCapabilitiesResponse;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.SetBalancerRunningRequest;
@@ -1443,7 +1447,8 @@ public class MasterRpcServices extends RSRpcServices
       RunCatalogScanRequest req) throws ServiceException {
     rpcPreCheck("runCatalogScan");
     try {
-      return ResponseConverter.buildRunCatalogScanResponse(master.catalogJanitorChore.scan());
+      return ResponseConverter.buildRunCatalogScanResponse(
+          this.master.catalogJanitorChore.scan());
     } catch (IOException ioe) {
       throw new ServiceException(ioe);
     }
@@ -2165,10 +2170,15 @@ public class MasterRpcServices extends RSRpcServices
         return RegionSpaceUseReportResponse.newBuilder().build();
       }
       MasterQuotaManager quotaManager = this.master.getMasterQuotaManager();
-      final long now = EnvironmentEdgeManager.currentTime();
-      for (RegionSpaceUse report : request.getSpaceUseList()) {
-        quotaManager.addRegionSize(ProtobufUtil.toRegionInfo(
-            report.getRegionInfo()), report.getRegionSize(), now);
+      if (quotaManager != null) {
+        final long now = EnvironmentEdgeManager.currentTime();
+        for (RegionSpaceUse report : request.getSpaceUseList()) {
+          quotaManager.addRegionSize(ProtobufUtil.toRegionInfo(report.getRegionInfo()),
+            report.getRegionSize(), now);
+        }
+      } else {
+        LOG.debug(
+          "Received region space usage report but HMaster is not ready to process it, skipping");
       }
       return RegionSpaceUseReportResponse.newBuilder().build();
     } catch (Exception e) {
@@ -2203,6 +2213,9 @@ public class MasterRpcServices extends RSRpcServices
               .setSize(tableSize.getValue()).build());
         }
         return builder.build();
+      } else {
+        LOG.debug(
+          "Received space quota region size report but HMaster is not ready to process it, skipping");
       }
       return builder.build();
     } catch (Exception e) {
@@ -2292,6 +2305,16 @@ public class MasterRpcServices extends RSRpcServices
 
   // HBCK Services
 
+  @Override
+  public RunHbckChoreResponse runHbckChore(RpcController c, RunHbckChoreRequest req)
+      throws ServiceException {
+    rpcPreCheck("runHbckChore");
+    LOG.info("{} request HBCK chore to run", master.getClientIdAuditPrefix());
+    HbckChore hbckChore = master.getHbckChore();
+    boolean ran = hbckChore.runChore();
+    return RunHbckChoreResponse.newBuilder().setRan(ran).build();
+  }
+
   /**
    * Update state of the table in meta only. This is required by hbck in some situations to cleanup
    * stuck assign/ unassign regions procedures for the table.
@@ -2303,11 +2326,12 @@ public class MasterRpcServices extends RSRpcServices
       SetTableStateInMetaRequest request) throws ServiceException {
     TableName tn = ProtobufUtil.toTableName(request.getTableName());
     try {
-      HBaseProtos.TableState prevState =
-          this.master.getTableStateManager().getTableState(tn).convert();
-      this.master.getTableStateManager().setTableState(tn,
-          TableState.convert(tn, request.getTableState()).getState());
-      return GetTableStateResponse.newBuilder().setTableState(prevState).build();
+      TableState prevState = this.master.getTableStateManager().getTableState(tn);
+      TableState newState = TableState.convert(tn, request.getTableState());
+      LOG.info("{} set table={} state from {} to {}", master.getClientIdAuditPrefix(),
+          tn, prevState.getState(), newState.getState());
+      this.master.getTableStateManager().setTableState(tn, newState.getState());
+      return GetTableStateResponse.newBuilder().setTableState(prevState.convert()).build();
     } catch (Exception e) {
       throw new ServiceException(e);
     }
@@ -2361,7 +2385,6 @@ public class MasterRpcServices extends RSRpcServices
   public MasterProtos.AssignsResponse assigns(RpcController controller,
       MasterProtos.AssignsRequest request)
     throws ServiceException {
-    LOG.info(master.getClientIdAuditPrefix() + " assigns");
     if (this.master.getMasterProcedureExecutor() == null) {
       throw new ServiceException("Master's ProcedureExecutor not initialized; retry later");
     }
@@ -2369,6 +2392,7 @@ public class MasterRpcServices extends RSRpcServices
         MasterProtos.AssignsResponse.newBuilder();
     try {
       boolean override = request.getOverride();
+      LOG.info("{} assigns, override={}", master.getClientIdAuditPrefix(), override);
       for (HBaseProtos.RegionSpecifier rs: request.getRegionList()) {
         long pid = submitProcedure(rs, override,
           (r, b) -> this.master.getAssignmentManager().createAssignProcedure(r, b));
@@ -2388,7 +2412,6 @@ public class MasterRpcServices extends RSRpcServices
   public MasterProtos.UnassignsResponse unassigns(RpcController controller,
       MasterProtos.UnassignsRequest request)
       throws ServiceException {
-    LOG.info(master.getClientIdAuditPrefix() + " unassigns");
     if (this.master.getMasterProcedureExecutor() == null) {
       throw new ServiceException("Master's ProcedureExecutor not initialized; retry later");
     }
@@ -2396,6 +2419,7 @@ public class MasterRpcServices extends RSRpcServices
         MasterProtos.UnassignsResponse.newBuilder();
     try {
       boolean override = request.getOverride();
+      LOG.info("{} unassigns, override={}", master.getClientIdAuditPrefix(), override);
       for (HBaseProtos.RegionSpecifier rs: request.getRegionList()) {
         long pid = submitProcedure(rs, override,
           (r, b) -> this.master.getAssignmentManager().createUnassignProcedure(r, b));
@@ -2422,6 +2446,9 @@ public class MasterRpcServices extends RSRpcServices
   public MasterProtos.BypassProcedureResponse bypassProcedure(RpcController controller,
       MasterProtos.BypassProcedureRequest request) throws ServiceException {
     try {
+      LOG.info("{} bypass procedures={}, waitTime={}, override={}, recursive={}",
+          master.getClientIdAuditPrefix(), request.getProcIdList(), request.getWaitTime(),
+          request.getOverride(), request.getRecursive());
       List<Boolean> ret =
           master.getMasterProcedureExecutor().bypassProcedure(request.getProcIdList(),
           request.getWaitTime(), request.getOverride(), request.getRecursive());
@@ -2440,10 +2467,13 @@ public class MasterRpcServices extends RSRpcServices
     try {
       for (HBaseProtos.ServerName serverName : serverNames) {
         ServerName server = ProtobufUtil.toServerName(serverName);
+        LOG.info("{} schedule ServerCrashProcedure for {}",
+            master.getClientIdAuditPrefix(), server);
         if (shouldSubmitSCP(server)) {
+          master.getServerManager().moveFromOnlineToDeadServers(server);
           ProcedureExecutor<MasterProcedureEnv> procExec = this.master.getMasterProcedureExecutor();
           pids.add(procExec.submitProcedure(new ServerCrashProcedure(procExec.getEnvironment(),
-              server, true, containMetaWals(server))));
+            server, true, containMetaWals(server))));
         } else {
           pids.add(-1L);
         }
@@ -2477,5 +2507,17 @@ public class MasterRpcServices extends RSRpcServices
       }
     }
     return true;
+  }
+
+  @Override
+  public FixMetaResponse fixMeta(RpcController controller, FixMetaRequest request)
+      throws ServiceException {
+    try {
+      MetaFixer mf = new MetaFixer(this.master);
+      mf.fix();
+      return FixMetaResponse.newBuilder().build();
+    } catch (IOException ioe) {
+      throw new ServiceException(ioe);
+    }
   }
 }

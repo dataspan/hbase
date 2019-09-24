@@ -17,13 +17,14 @@
  */
 package org.apache.hadoop.hbase.regionserver.wal;
 
-import static org.junit.Assert.*;
+import static org.hamcrest.CoreMatchers.containsString;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
-import static org.hamcrest.CoreMatchers.*;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -435,6 +436,7 @@ public abstract class AbstractTestFSWAL {
     String testName = currentTest.getMethodName();
     AbstractFSWAL<?> wal = newWAL(FS, CommonFSUtils.getWALRootDir(CONF), DIR.toString(), testName,
         CONF, null, true, null, null);
+    wal.init();
     try {
       wal.sync();
     } finally {

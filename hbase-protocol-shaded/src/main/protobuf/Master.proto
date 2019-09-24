@@ -350,6 +350,13 @@ message IsNormalizerEnabledResponse {
   required bool enabled = 1;
 }
 
+message RunHbckChoreRequest {
+}
+
+message RunHbckChoreResponse {
+  required bool ran = 1;
+}
+
 message RunCatalogScanRequest {
 }
 
@@ -1050,6 +1057,10 @@ message ScheduleServerCrashProcedureResponse {
   repeated uint64 pid = 1;
 }
 
+message FixMetaRequest {}
+
+message FixMetaResponse {}
+
 service HbckService {
   /** Update state of the table in meta only*/
   rpc SetTableStateInMeta(SetTableStateInMetaRequest)
@@ -1080,4 +1091,14 @@ service HbckService {
   /** Schedule a ServerCrashProcedure to help recover a crash server */
   rpc ScheduleServerCrashProcedure(ScheduleServerCrashProcedureRequest)
     returns(ScheduleServerCrashProcedureResponse);
+
+  /**
+   * Request HBCK chore to run at master side.
+   */
+  rpc RunHbckChore(RunHbckChoreRequest)
+    returns(RunHbckChoreResponse);
+
+  /** Schedule a fix meta run. */
+  rpc FixMeta(FixMetaRequest)
+    returns(FixMetaResponse);
 }

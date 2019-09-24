@@ -181,7 +181,8 @@ public class HBaseTestingUtility extends HBaseZKTestingUtility {
    * System property key to get test directory value. Name is as it is because mini dfs has
    * hard-codings to put test data here. It should NOT be used directly in HBase, as it's a property
    * used in mini dfs.
-   * @deprecated can be used only with mini dfs
+   * @deprecated since 2.0.0 and will be removed in 3.0.0. Can be used only with mini dfs.
+   * @see <a href="https://issues.apache.org/jira/browse/HBASE-19410">HBASE-19410</a>
    */
   @Deprecated
   private static final String TEST_DIRECTORY_KEY = "test.build.data";
@@ -357,8 +358,11 @@ public class HBaseTestingUtility extends HBaseZKTestingUtility {
   }
 
   /**
-   * @deprecated use {@link HBaseTestingUtility#HBaseTestingUtility()} instead
+   * @deprecated since 2.0.0 and will be removed in 3.0.0. Use {@link #HBaseTestingUtility()}
+   *   instead.
    * @return a normal HBaseTestingUtility
+   * @see #HBaseTestingUtility()
+   * @see <a href="https://issues.apache.org/jira/browse/HBASE-19841">HBASE-19841</a>
    */
   @Deprecated
   public static HBaseTestingUtility createLocalHTU() {
@@ -366,8 +370,11 @@ public class HBaseTestingUtility extends HBaseZKTestingUtility {
   }
 
   /**
-   * @deprecated use {@link HBaseTestingUtility#HBaseTestingUtility(Configuration)} instead
+   * @deprecated since 2.0.0 and will be removed in 3.0.0. Use
+   *   {@link #HBaseTestingUtility(Configuration)} instead.
    * @return a normal HBaseTestingUtility
+   * @see #HBaseTestingUtility(Configuration)
+   * @see <a href="https://issues.apache.org/jira/browse/HBASE-19841">HBASE-19841</a>
    */
   @Deprecated
   public static HBaseTestingUtility createLocalHTU(Configuration c) {
@@ -1770,6 +1777,12 @@ public class HBaseTestingUtility extends HBaseZKTestingUtility {
   public static final byte [] START_KEY_BYTES = {FIRST_CHAR, FIRST_CHAR, FIRST_CHAR};
   public static final String START_KEY = new String(START_KEY_BYTES, HConstants.UTF8_CHARSET);
 
+  /**
+   * @deprecated since 2.0.0 and will be removed in 3.0.0. Use
+   *   {@link #createTableDescriptor(TableName, int, int, int, KeepDeletedCells)} instead.
+   * @see #createTableDescriptor(TableName, int, int, int, KeepDeletedCells)
+   * @see <a href="https://issues.apache.org/jira/browse/HBASE-13893">HBASE-13893</a>
+   */
   @Deprecated
   public HTableDescriptor createTableDescriptor(final String name,
       final int minVersions, final int versions, final int ttl, KeepDeletedCells keepDeleted) {
@@ -1781,6 +1794,10 @@ public class HBaseTestingUtility extends HBaseZKTestingUtility {
    * Create a table of name <code>name</code>.
    * @param name Name to give table.
    * @return Column descriptor.
+   * @deprecated since 2.0.0 and will be removed in 3.0.0. Use
+   *   {@link #createTableDescriptor(TableName, int, int, int, KeepDeletedCells)} instead.
+   * @see #createTableDescriptor(TableName, int, int, int, KeepDeletedCells)
+   * @see <a href="https://issues.apache.org/jira/browse/HBASE-13893">HBASE-13893</a>
    */
   @Deprecated
   public HTableDescriptor createTableDescriptor(final String name) {
@@ -1872,18 +1889,21 @@ public class HBaseTestingUtility extends HBaseZKTestingUtility {
   }
 
   /**
-   * @param tableName
-   * @param startKey
-   * @param stopKey
-   * @param callingMethod
-   * @param conf
-   * @param isReadOnly
-   * @param families
-   * @throws IOException
-   * @return A region on which you must call
-             {@link HBaseTestingUtility#closeRegionAndWAL(HRegion)} when done.
-   * @deprecated use
-   * {@link #createLocalHRegion(TableName, byte[], byte[], boolean, Durability, WAL, byte[]...)}
+   * @param tableName the name of the table
+   * @param startKey the start key of the region
+   * @param stopKey the stop key of the region
+   * @param callingMethod the name of the calling method probably a test method
+   * @param conf the configuration to use
+   * @param isReadOnly {@code true} if the table is read only, {@code false} otherwise
+   * @param families the column families to use
+   * @throws IOException if an IO problem is encountered
+   * @return A region on which you must call {@link HBaseTestingUtility#closeRegionAndWAL(HRegion)}
+   *         when done.
+   * @deprecated since 2.0.0 and will be removed in 3.0.0. Use
+   *   {@link #createLocalHRegion(TableName, byte[], byte[], boolean, Durability, WAL, byte[]...)}
+   *   instead.
+   * @see #createLocalHRegion(TableName, byte[], byte[], boolean, Durability, WAL, byte[]...)
+   * @see <a href="https://issues.apache.org/jira/browse/HBASE-13893">HBASE-13893</a>
    */
   @Deprecated
   public HRegion createLocalHRegion(byte[] tableName, byte[] startKey, byte[] stopKey,
@@ -2499,6 +2519,19 @@ public class HBaseTestingUtility extends HBaseZKTestingUtility {
     return rows;
   }
 
+  /**
+   * Returns all regions of the specified table
+   *
+   * @param tableName the table name
+   * @return all regions of the specified table
+   * @throws IOException when getting the regions fails.
+   */
+  private List<RegionInfo> getRegions(TableName tableName) throws IOException {
+    try (Admin admin = getConnection().getAdmin()) {
+      return admin.getRegions(tableName);
+    }
+  }
+
   /*
    * Find any other region server which is different from the one identified by parameter
    * @param rs
@@ -2517,9 +2550,6 @@ public class HBaseTestingUtility extends HBaseZKTestingUtility {
   /**
    * Tool to get the reference to the region server object that holds the
    * region of the specified user table.
-   * It first searches for the meta rows that contain the region of the
-   * specified table, then gets the index of that RS, and finally retrieves
-   * the RS's reference.
    * @param tableName user table to lookup in hbase:meta
    * @return region server that holds it, null if the row doesn't exist
    * @throws IOException
@@ -2527,21 +2557,27 @@ public class HBaseTestingUtility extends HBaseZKTestingUtility {
    */
   public HRegionServer getRSForFirstRegionInTable(TableName tableName)
       throws IOException, InterruptedException {
-    List<byte[]> metaRows = getMetaTableRows(tableName);
-    if (metaRows == null || metaRows.isEmpty()) {
+    List<RegionInfo> regions = getRegions(tableName);
+    if (regions == null || regions.isEmpty()) {
       return null;
     }
-    LOG.debug("Found " + metaRows.size() + " rows for table " +
-      tableName);
-    byte [] firstrow = metaRows.get(0);
-    LOG.debug("FirstRow=" + Bytes.toString(firstrow));
+    LOG.debug("Found " + regions.size() + " regions for table " +
+        tableName);
+
+    byte[] firstRegionName = regions.stream()
+        .filter(r -> !r.isOffline())
+        .map(RegionInfo::getRegionName)
+        .findFirst()
+        .orElseThrow(() -> new IOException("online regions not found in table " + tableName));
+
+    LOG.debug("firstRegionName=" + Bytes.toString(firstRegionName));
     long pause = getConfiguration().getLong(HConstants.HBASE_CLIENT_PAUSE,
       HConstants.DEFAULT_HBASE_CLIENT_PAUSE);
     int numRetries = getConfiguration().getInt(HConstants.HBASE_CLIENT_RETRIES_NUMBER,
       HConstants.DEFAULT_HBASE_CLIENT_RETRIES_NUMBER);
     RetryCounter retrier = new RetryCounter(numRetries+1, (int)pause, TimeUnit.MICROSECONDS);
     while(retrier.shouldRetry()) {
-      int index = getMiniHBaseCluster().getServerWith(firstrow);
+      int index = getMiniHBaseCluster().getServerWith(firstRegionName);
       if (index != -1) {
         return getMiniHBaseCluster().getRegionServerThreads().get(index).getRegionServer();
       }
@@ -3103,10 +3139,9 @@ public class HBaseTestingUtility extends HBaseZKTestingUtility {
    * Waits for a table to be 'enabled'.  Enabled means that table is set as 'enabled' and the
    * regions have been all assigned.  Will timeout after default period (30 seconds)
    * Tolerates nonexistent table.
-   * @param table Table to wait on.
-   * @param table
-   * @throws InterruptedException
-   * @throws IOException
+   * @param table the table to wait on.
+   * @throws InterruptedException if interrupted while waiting
+   * @throws IOException if an IO problem is encountered
    */
   public void waitTableEnabled(TableName table)
       throws InterruptedException, IOException {
@@ -3482,7 +3517,7 @@ public class HBaseTestingUtility extends HBaseZKTestingUtility {
    * @param startKey
    * @param endKey
    * @param numRegions the number of regions to be created. it has to be greater than 3.
-   * @return
+   * @return resulting split keys
    */
   public byte[][] getRegionSplitStartKeys(byte[] startKey, byte[] endKey, int numRegions){
     assertTrue(numRegions>3);
