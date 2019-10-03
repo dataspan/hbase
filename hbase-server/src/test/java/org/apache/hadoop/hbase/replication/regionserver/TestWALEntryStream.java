@@ -110,6 +110,8 @@ public class TestWALEntryStream {
     TEST_UTIL = new HBaseTestingUtility();
     CONF = TEST_UTIL.getConfiguration();
     TEST_UTIL.startMiniDFSCluster(3);
+    CONF.set(WALEntryStream.RESTART_WAL_READING_CONFIG_ENTRY, "false");
+    CONF.set(WALEntryStream.SKIP_WAL_LOG_FILE_PATH_CONFIG_ENTRY, "/hbase/skipped_logs");
 
     cluster = TEST_UTIL.getDFSCluster();
     fs = cluster.getFileSystem();
